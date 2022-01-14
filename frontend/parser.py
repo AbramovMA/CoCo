@@ -260,6 +260,11 @@ def p_hexconst(p):
     p[0] = ast.HexConst(int(p[1][2:], 16)).at(loc(p))
 
 
+def p_floatconst(p):
+    '''expr : FLOATCONST'''
+    p[0] = ast.FloatConst(float(p[1])).at(loc(p))
+
+
 def p_stringconst(p):
     '''expr : STRINGCONST'''
     p[0] = ast.StringConst(p[1])

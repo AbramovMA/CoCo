@@ -224,13 +224,20 @@ class IRGen(ASTTransformer):
 
     def visitUnaryOp(self, node):
         # logical operators don't exist in LLVM
+        has_float_argument = repr(node.value.ty)=='float'
+
         if node.op == '!':
             eq = ast.Operator.get('==')
             false = self.makebool(False)
             return self.visit(ast.BinaryOp(node.value, eq, false).at(node))
 
         if node.op == '-':
-            return self.builder.neg(self.visit(node.value))
+            if has_float_argument:
+                sub_float = ast.Operator.get('-')
+                zero_float = self.makefloat(0.0)
+                return self.visit(ast.BinaryOp(zero_float, sub_float, node.value).at(node))
+            else:
+                return self.builder.neg(self.visit(node.value))
 
         assert node.op == '~'
         return self.builder.not_(self.visit(node.value))
@@ -248,16 +255,31 @@ class IRGen(ASTTransformer):
             yes = self.makebool(True)
             return self.lazy_conditional(node, node.lhs, yes, node.rhs)
 
+        has_float_argument = repr(node.lhs.ty)=='float'
+
         self.visit_children(node)
 
         if op.is_equality() or op.is_relational():
-            return b.icmp_signed(op.op, node.lhs, node.rhs)
+            if has_float_argument:
+                if op == '!=':
+                    return b.fcmp_unordered(op.op, node.lhs, node.rhs)
+                else:
+                    return b.fcmp_ordered(op.op, node.lhs, node.rhs)
+            else:
+                return b.icmp_signed(op.op, node.lhs, node.rhs)
 
         callbacks = {
             '+': b.add, '-': b.sub, '*': b.mul, '/': b.sdiv, '%': b.srem
         }
 
-        return callbacks[op.op](node.lhs, node.rhs)
+        fcallbacks = {
+            '+': b.fadd, '-': b.fsub, '*': b.fmul, '/': b.fdiv, '%': b.frem
+        }
+
+        if has_float_argument:
+            return fcallbacks[op.op](node.lhs, node.rhs)
+        else:
+            return callbacks[op.op](node.lhs, node.rhs)
 
     def lazy_conditional(self, node, cond, yesval, noval):
         b = self.builder
@@ -297,6 +319,9 @@ class IRGen(ASTTransformer):
 
     def visitIntConst(self, node):
         return ir.Constant(self.getty(node.ty), node.value)
+    
+    def visitFloatConst(self, node):
+        return ir.Constant(self.getty(node.ty), node.value)
 
     def visitStringConst(self, node):
         # name is unique, based on simple counter
@@ -334,6 +359,9 @@ class IRGen(ASTTransformer):
 
         if str(ty) == 'int':
             return ir.IntType(ast.Type.int_bits)
+        
+        if str(ty) == 'float':
+            return ir.FloatType()
 
         assert str(ty) == 'void'
         return ir.VoidType()
@@ -373,3 +401,9 @@ class IRGen(ASTTransformer):
         b = ast.BoolConst(value)
         b.ty = ast.Type('bool')
         return b
+    
+    @staticmethod
+    def makefloat(value):
+        f = ast.FloatConst(value)
+        f.ty = ast.Type('float')
+        return f
