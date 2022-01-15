@@ -361,7 +361,7 @@ class IRGen(ASTTransformer):
             return ir.IntType(ast.Type.int_bits)
         
         if str(ty) == 'float':
-            return ir.FloatType()
+            return ir.DoubleType()
 
         assert str(ty) == 'void'
         return ir.VoidType()
