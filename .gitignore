@@ -6,3 +6,4 @@ obj/
 bootstrap.log
 *.pyc
 coco.tar.gz
+examples/*
