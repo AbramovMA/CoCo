@@ -332,19 +332,19 @@ class If(Statement):
 
 
 class While(Statement):
-    children = ['cond', 'body']
-    types = dict(cond='Expression', body='Block')
+    children = ['cond', 'yesbody']
+    types = dict(cond='Expression', yesbody='Block')
 
     def __str__(self):
-        return 'while ({0.cond}) {0.body}'.format(self)
+        return 'while ({0.cond}) {0.yesbody}'.format(self)
 
 
 class DoWhile(Statement):
-    children = ['body', 'cond']
-    types = dict(body='Block', cond='Expression')
+    children = ['yesbody', 'cond']
+    types = dict(yesbody='Block', cond='Expression')
 
     def __str__(self):
-        return 'do {0.body} while ({0.cond});'.format(self)
+        return 'do {0.yesbody} while ({0.cond});'.format(self)
 
 
 class Return(Statement):
