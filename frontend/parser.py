@@ -164,6 +164,18 @@ def p_if(p):
     p[0] = ast.If(p[3], block(p[5]), nobody).at(loc(p, 1, 4))
 
 
+def p_while(p):
+    '''statement : WHILE LPAREN expr RPAREN statement'''
+    body = block(p[5])
+    p[0] = ast.While(p[3], block(p[5])).at(loc(p, 1 ,4))
+
+
+def p_do_while(p):
+    '''statement : DO statement WHILE LPAREN expr RPAREN'''
+    body = block(p[2])
+    p[0] = ast.DoWhile(block(p[2]), p[5]).at(loc)
+
+
 def block(stat):
     if isinstance(stat, ast.Block):
         return stat
@@ -258,6 +270,11 @@ def p_intconst(p):
 def p_hexconst(p):
     '''expr : HEXCONST'''
     p[0] = ast.HexConst(int(p[1][2:], 16)).at(loc(p))
+
+
+def p_floatconst(p):
+    '''expr : FLOATCONST'''
+    p[0] = ast.FloatConst(float(p[1])).at(loc(p))
 
 
 def p_stringconst(p):
