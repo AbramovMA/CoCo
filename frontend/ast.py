@@ -330,6 +330,35 @@ class If(Statement):
         return s
 
 
+class While(Statement):
+    children = ['cond', 'body']
+    types = dict(cond='Expression', body='Block')
+
+    def __str__(self):
+        return 'while ({0.cond}) {0.body}'.format(self)
+
+
+class Do(Statement):
+    children = ['body', 'cond']
+    types = dict(body='Block', cond='Expression')
+
+    def __str__(self):
+        return 'do {0.body} while ({0.cond});'.format(self)
+
+
+class For(Statement):
+    children = ['name', 'startvalue', 'endvalue', 'body']
+    types = dict(name='str', startvalue='Expression', endvalue='Expression', body='Block')
+
+    def __str__(self):
+        return 'for (int {0.name} = {0.startvalue} to {0.endvalue}) {0.body}'.format(self)
+    # children = ['_type', 'name', 'startvalue', 'endvalue', 'body']
+    # types = dict(_type='Type', name='str', startvalue='Expression', endvalue='Expression', body='Block')
+
+    # def __str__(self):
+    #     return 'for ({0._type} {0.name} = {0.startvalue} to {0.endvalue}) {0.body}'.format(self)
+
+
 class Return(Statement):
     children = ['value']
     types = dict(value='Expression?')

@@ -9,6 +9,9 @@ from util import LocationError, FatalError
 precedence = (
     ('nonassoc', 'IF'),
     ('nonassoc', 'ELSE'),
+    ('nonassoc', 'WHILE'),
+    ('nonassoc', 'DO'),
+    ('nonassoc', 'FOR'),
     ('left', 'OR'),
     ('left', 'AND'),
     ('left', 'EQ', 'NE'),
@@ -162,6 +165,25 @@ def p_if(p):
                  | IF LPAREN expr RPAREN statement ELSE statement %prec ELSE'''
     nobody = block(p[7]) if len(p) == 8 else None
     p[0] = ast.If(p[3], block(p[5]), nobody).at(loc(p, 1, 4))
+
+
+def p_while(p):
+    '''statement : WHILE LPAREN expr RPAREN statement %prec WHILE'''
+    p[0] = ast.While(p[3], block(p[5])).at(loc(p))
+
+
+def p_do(p):
+    '''statement : DO statement WHILE LPAREN expr RPAREN SEMICOL %prec DO'''
+    p[0] = ast.Do(block(p[2]), p[5]).at(loc(p, 2)).at(loc(p))
+
+
+def p_for(p):
+    pass
+    '''statement: FOR LPAREN INT ID ASSIGN expr TO expr RPAREN statement %prec FOR'''
+    p[0] = ast.For(p[4], p[6], p[8], block(p[10])).at(loc(p))
+    # pass
+    # '''statement: FOR LPAREN TYPE ID ASSIGN expr TO expr RPAREN statement %prec FOR'''
+    # p[0] = ast.For(p[3], p[4], p[6], p[8], block(p[10])).at(loc(p))
 
 
 def block(stat):

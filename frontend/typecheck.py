@@ -129,6 +129,24 @@ class TypeChecker(ASTVisitor):
         # condition must be bool
         self.visit_children(node)
         self.check_type(node.cond, self.tbool)
+    
+    def visitWhile(self, node):
+        self.visit_children(node)
+        self.check_type(node.cond, self.tbool)
+    
+    def visitDo(self, node):
+        self.visit_children(node)
+        self.check_type(node.cond, self.tbool)
+    
+    def visitFor(self, node):
+        self.visit_children(node)
+        # # self.check_type(node._type, self.tint)
+        # var_is_int = str(node._type) == 'int'
+        # if not var_is_int:
+        #     raise NodeError(node._type,
+        #             'Error: variable type must be int')
+        self.check_type(node.startvalue, self.tint)
+        self.check_type(node.endvalue, self.tint)
 
     def visitReturn(self, node):
         # returned type must match function type

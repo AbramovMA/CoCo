@@ -30,3 +30,6 @@ class Desugarer(ASTTransformer):
         # to:   lhs = lhs op rhs
         self.visit_children(m)
         return Assignment(m.ref, BinaryOp(m.ref, m.op, m.value)).at(m)
+    
+    def visitFor(self, node):
+        pass
