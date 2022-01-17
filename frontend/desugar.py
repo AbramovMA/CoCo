@@ -59,11 +59,12 @@ class Desugarer(ASTTransformer):
         # the while condition
         cond = BinaryOp(VarUse(node.name), Operator.get('<'), VarUse(var))
 
-        # index variable incrementation a[b]
+        # induction variable incrementation
         incr = Modification(VarUse(node.name), Operator.get('+'), IntConst(1))
         whileBody = Block([node.body, incr])
 
         whileLoop = While(cond, whileBody)
+        whileLoop.is_for = True
 
         # complete for -> while rewrite
         forLoopBlock = Block([createIndVar, createEndVar, whileLoop])

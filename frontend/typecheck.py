@@ -26,6 +26,7 @@ class TypeChecker(ASTVisitor):
         self.tvoid = Type.get('void')
         self.curfn = None
         self.in_loop = False
+        self.loop_depth = 0
 
     def operand_types(self, operator):
         if operator.is_logical():
@@ -131,13 +132,24 @@ class TypeChecker(ASTVisitor):
         self.check_type(node.cond, self.tbool)
 
     def visitWhile(self, node):
+        self.loop_depth += 1
         self.visit_children(node)
         self.check_type(node.cond, self.tbool)
+        self.loop_depth -= 1
 
     def visitDoWhile(self, node):
+        self.loop_depth += 1
         self.visit_children(node)
         self.check_type(node.cond, self.tbool)
+        self.loop_depth -= 1
 
+    def visitBreak(self, node):
+        if self.loop_depth == 0:
+            raise NodeError(node, 'Error: break must be inside of a loop')
+
+    def visitContinue(self, node):
+        if self.loop_depth == 0:
+            raise NodeError(node, 'Error: continue must be inside of a loop')
 
     def visitReturn(self, node):
         # returned type must match function type

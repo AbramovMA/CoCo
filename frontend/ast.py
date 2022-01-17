@@ -334,6 +334,8 @@ class If(Statement):
 class While(Statement):
     children = ['cond', 'yesbody']
     types = dict(cond='Expression', yesbody='Block')
+    
+    is_for = False
 
     def __str__(self):
         return 'while ({0.cond}) {0.yesbody}'.format(self)

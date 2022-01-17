@@ -1,5 +1,5 @@
 from llvmlite import ir, binding
-from util import ASTTransformer
+from util import ASTTransformer, NodeError
 import ast
 
 
@@ -34,6 +34,8 @@ class IRGen(ASTTransformer):
         self.zero = self.getint(0)
         self.memset = None
         self.loops = []
+        self.continue_point = None
+        self.break_point = None
 
     @classmethod
     def compile(cls, module_name, program):
@@ -157,10 +159,25 @@ class IRGen(ASTTransformer):
         self.builder.position_at_start(bend)
 
     def visitWhile(self, node):
+        is_for_loop = node.is_for
+
+        old_continue_point = self.continue_point
+        old_break_point = self.break_point
+
         prefix = self.builder.block.name
         bcondition = self.add_block(prefix + '.condition')
         bbody = self.add_block(prefix + '.body')
+        if is_for_loop:
+            binc = self.add_block(prefix + '.inc')
         bend = self.add_block(prefix + '.end')
+
+        self.break_point = bend
+        self.continue_point = binc if is_for_loop else bcondition
+
+        if is_for_loop:
+            loop_body, increment_statement = node.yesbody.statements
+        else:
+            loop_body = node.yesbody
 
         self.builder.branch(bcondition)
 
@@ -168,18 +185,35 @@ class IRGen(ASTTransformer):
         cond = self.visit_before(node.cond, bbody)
         self.builder.cbranch(cond, bbody, bend)
 
-        self.builder.position_at_start(bbody)
-        self.visit_before(node.yesbody, bend)
-        self.builder.branch(bcondition)
+        if is_for_loop:
+            self.builder.position_at_start(bbody)
+            self.visit_before(loop_body, binc)
+            self.builder.branch(binc)
+
+            self.builder.position_at_start(binc)
+            self.visit_before(increment_statement, bend)
+            self.builder.branch(bcondition)
+        else:
+            self.builder.position_at_start(bbody)
+            self.visit_before(loop_body, bend)
+            self.builder.branch(bcondition)
 
         self.builder.position_at_start(bend)
 
+        self.continue_point = old_continue_point
+        self.break_point = old_break_point
 
     def visitDoWhile(self, node):
+        old_continue_point = self.continue_point
+        old_break_point = self.break_point
+
         prefix = self.builder.block.name
         bbody = self.add_block(prefix + '.body')
         bcondition = self.add_block(prefix + '.condition')
         bend = self.add_block(prefix + '.end')
+
+        self.continue_point = bcondition
+        self.break_point = bend
 
         self.builder.branch(bbody)
 
@@ -194,6 +228,21 @@ class IRGen(ASTTransformer):
 
         self.builder.position_at_start(bend)
 
+        self.continue_point = old_continue_point
+        self.break_point = old_break_point
+
+    def visitFor(self, node):
+        raise NotImplementedError  # should be desugared
+
+    def visitBreak(self, node):
+        if self.break_point is None:
+            raise NodeError(node, "You Bad [Break]")
+        self.builder.branch(self.break_point)
+
+    def visitContinue(self, node):
+        if self.continue_point is None:
+            raise NodeError(node, "You Bad [Continue]")
+        self.builder.branch(self.continue_point)
 
     def visitReturn(self, node):
         self.visit_children(node)
