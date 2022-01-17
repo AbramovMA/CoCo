@@ -171,7 +171,7 @@ def p_while(p):
 
 
 def p_do_while(p):
-    '''statement : DO statement WHILE LPAREN expr RPAREN'''
+    '''statement : DO statement WHILE LPAREN expr RPAREN SEMICOL'''
     body = block(p[2])
     p[0] = ast.DoWhile(block(p[2]), p[5]).at(loc(p))
 
