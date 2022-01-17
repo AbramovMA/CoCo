@@ -182,6 +182,16 @@ def p_for(p):
     p[0] = ast.For(p[3], p[4], p[6], p[8], block(p[10])).at(loc(p, 1, 9))
 
 
+def p_break(p):
+    '''statement : BREAK SEMICOL'''
+    p[0] = ast.Break().at(loc(p))
+
+
+def p_continue(p):
+    '''statement : CONTINUE SEMICOL'''
+    p[0] = ast.Continue().at(loc(p))
+
+
 def block(stat):
     if isinstance(stat, ast.Block):
         return stat

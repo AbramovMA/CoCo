@@ -363,6 +363,16 @@ class Return(Statement):
         return 'return;' if self.value is None else 'return {0.value};'.format(self)
 
 
+class Break(Statement):
+    def __str__(self):
+        return 'break;'
+
+
+class Continue(Statement):
+    def __str__(self):
+        return 'continue;'
+
+
 class Block(Statement):
     children = ['statements']
     types = dict(statements='Statement*')

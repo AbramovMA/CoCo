@@ -15,7 +15,7 @@ states = (
 reserved = (
     'extern', 'static',
     'if', 'else',
-    'return', 'for', 'while', 'do', 'to',
+    'return', 'for', 'while', 'do', 'to', 'break', 'continue'
 )
 reserved_map = dict((word, word.upper()) for word in reserved)
 
