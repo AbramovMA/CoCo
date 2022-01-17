@@ -345,6 +345,14 @@ class DoWhile(Statement):
 
     def __str__(self):
         return 'do {0.yesbody} while ({0.cond});'.format(self)
+ 
+
+class For(Statement):
+    children = ['_type', 'name', 'start', 'end', 'body']
+    types = dict(_type='Type', name='str', start='Expression', end='Expression', body='Block')
+
+    def __str__(self):
+        return 'for ({0._type} {0.name} = {0.start} to {0.end}) {0.body}'.format(self)
 
 
 class Return(Statement):

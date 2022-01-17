@@ -176,6 +176,12 @@ def p_do_while(p):
     p[0] = ast.DoWhile(block(p[2]), p[5]).at(loc(p))
 
 
+def p_for(p):
+    '''statement : FOR LPAREN type ID ASSIGN expr TO expr RPAREN statement'''
+    body = block(p[10])
+    p[0] = ast.For(p[3], p[4], p[6], p[8], block(p[10])).at(loc(p, 1, 9))
+
+
 def block(stat):
     if isinstance(stat, ast.Block):
         return stat
