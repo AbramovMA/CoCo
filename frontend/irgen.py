@@ -174,34 +174,25 @@ class IRGen(ASTTransformer):
 
         self.builder.position_at_start(bend)
 
-        # print(self.module)
-
-        # instructions for the cond before the 'if' block
-        # cond = self.visit_before(node.cond, bif)
-        # self.builder.cbranch(cond, bif, bend)
-
-        # # instructions for the 'if' block before the 'else(end)' block
-        # self.builder.position_at_start(bif)
-        # self.visit_before(node.yesbody, bend)
-        # self.builder.branch(bend)
-
-        # self.builder.position_at_start(bif)
 
     def visitDoWhile(self, node):
         prefix = self.builder.block.name
-        bif = self.add_block(prefix + '.if')
-        bend = self.add_block(prefix + '.endif') # belse = bend
+        bbody = self.add_block(prefix + '.body')
+        bcondition = self.add_block(prefix + '.condition')
+        bend = self.add_block(prefix + '.end')
 
-        # instructions for the statement before the cond block
-        self.visit_before(node.yesbody, bend)
-        self.builder.branch(bend)
+        self.builder.branch(bbody)
 
-        # instructions for the cond before looping again
-        cond = self.visit_before(node.cond, bif)
-        self.builder.cbranch(cond, bif, bend)
+        self.builder.position_at_start(bbody)
+        self.visit_before(node.yesbody, bcondition)
+        self.builder.branch(bcondition)
 
 
-    
+        self.builder.position_at_start(bcondition)
+        cond = self.visit_before(node.cond, bend)
+        self.builder.cbranch(cond, bbody, bend)
+
+        self.builder.position_at_start(bend)
 
 
     def visitReturn(self, node):

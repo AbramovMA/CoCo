@@ -1,4 +1,3 @@
-
 from util import ASTTransformer
 from ast import Type, Operator, VarDef, ArrayDef, Assignment, Modification, \
         If, Block, VarUse, BinaryOp, IntConst, Return, While, DoWhile
@@ -33,24 +32,40 @@ class Desugarer(ASTTransformer):
         return Assignment(m.ref, BinaryOp(m.ref, m.op, m.value)).at(m)
 
     def visitFor(self, node):
+        # from:
+        #     for (T X = min to max){
+        #         Body;
+        #     }
+        # to:
+        #     {
+        #         T X = min
+        #         T end = max
+        #         while (X < end){
+        #             {
+        #                 Body;
+        #             }
+        #             X += 1;
+        #         }
+        #     }
         self.visit_children(node)
 
-        #evaluate start and end 
+        # evaluate start and end 
 
         var = self.makevar('endVar')
         
         createEndVar = VarDef(Type.get('int'), var, node.end)
         createIndVar = VarDef(node._type, node.name, node.start)
         
-        #cond
-        cond = BinaryOp(VarUse(node.name, None), Operator.get('<'), VarUse(var, None))
+        # the while condition
+        cond = BinaryOp(VarUse(node.name), Operator.get('<'), VarUse(var))
 
-        #instructions for the body block
-        incr = Assignment(VarUse(node.name, None), BinaryOp(VarUse(node.name, None), Operator.get('+'), IntConst(1)))
+        # index variable incrementation a[b]
+        incr = Modification(VarUse(node.name), Operator.get('+'), IntConst(1))
         whileBody = Block([node.body, incr])
 
         whileLoop = While(cond, whileBody)
 
+        # complete for -> while rewrite
         forLoopBlock = Block([createIndVar, createEndVar, whileLoop])
         
         self.visit(forLoopBlock)
