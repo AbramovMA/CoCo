@@ -36,11 +36,14 @@ class Desugarer(ASTTransformer):
         self.visit_children(node)
 
         #evaluate start and end 
-        createEndVar = VarDef(Type('int'), '_endVar', node.end)
+
+        var = self.makevar('endVar')
+        
+        createEndVar = VarDef(Type.get('int'), var, node.end)
         createIndVar = VarDef(node._type, node.name, node.start)
         
         #cond
-        cond = BinaryOp(VarUse(node.name, None), Operator.get('<'), VarUse('_endVar', None))
+        cond = BinaryOp(VarUse(node.name, None), Operator.get('<'), VarUse(var, None))
 
         #instructions for the body block
         incr = Assignment(VarUse(node.name, None), BinaryOp(VarUse(node.name, None), Operator.get('+'), IntConst(1)))
@@ -49,8 +52,8 @@ class Desugarer(ASTTransformer):
         whileLoop = While(cond, whileBody)
 
         forLoopBlock = Block([createIndVar, createEndVar, whileLoop])
-
-        self.visit_children(forLoopBlock)
+        
+        self.visit(forLoopBlock)
 
         return forLoopBlock.at(node)
 

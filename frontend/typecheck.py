@@ -132,11 +132,12 @@ class TypeChecker(ASTVisitor):
 
     def visitWhile(self, node):
         self.visit_children(node)
-        #self.check_type(node.cond, self.tbool)
+        # print("Hello, cruel world!")
+        self.check_type(node.cond, self.tbool)
 
     def visitDoWhile(self, node):
         self.visit_children(node)
-        #self.check_type(node.cond, self.tbool)
+        self.check_type(node.cond, self.tbool)
 
     # def visitBreak(self, node):
 
