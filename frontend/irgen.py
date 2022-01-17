@@ -145,15 +145,21 @@ class IRGen(ASTTransformer):
         self.builder.cbranch(cond, bif, belse)
 
         # insert instructions for the 'if' block before the 'else' block
+        yes_manually_terminated = node.yesbody.manually_terminated
+
         self.builder.position_at_start(bif)
         self.visit_before(node.yesbody, belse)
-        self.builder.branch(bend)
+        if not yes_manually_terminated:
+            self.builder.branch(bend)
 
         # insert instructions for the 'else' block before the end block
         if node.nobody:
+            no_manually_terminated = node.nobody.manually_terminated
+
             self.builder.position_at_start(belse)
             self.visit_before(node.nobody, bend)
-            self.builder.branch(bend)
+            if not no_manually_terminated:
+                self.builder.branch(bend)
 
         # go to the end block to emit further instructions
         self.builder.position_at_start(bend)
@@ -179,6 +185,8 @@ class IRGen(ASTTransformer):
         else:
             loop_body = node.yesbody
 
+        manually_terminated = loop_body.manually_terminated
+
         self.builder.branch(bcondition)
 
         self.builder.position_at_start(bcondition)
@@ -188,7 +196,8 @@ class IRGen(ASTTransformer):
         if is_for_loop:
             self.builder.position_at_start(bbody)
             self.visit_before(loop_body, binc)
-            self.builder.branch(binc)
+            if not manually_terminated:
+                self.builder.branch(binc)
 
             self.builder.position_at_start(binc)
             self.visit_before(increment_statement, bend)
@@ -196,7 +205,8 @@ class IRGen(ASTTransformer):
         else:
             self.builder.position_at_start(bbody)
             self.visit_before(loop_body, bend)
-            self.builder.branch(bcondition)
+            if not manually_terminated:
+                self.builder.branch(bcondition)
 
         self.builder.position_at_start(bend)
 
@@ -215,11 +225,14 @@ class IRGen(ASTTransformer):
         self.continue_point = bcondition
         self.break_point = bend
 
+        manually_terminated = node.yesbody.manually_terminated
+
         self.builder.branch(bbody)
 
         self.builder.position_at_start(bbody)
         self.visit_before(node.yesbody, bcondition)
-        self.builder.branch(bcondition)
+        if not manually_terminated:
+            self.builder.branch(bcondition)
 
 
         self.builder.position_at_start(bcondition)

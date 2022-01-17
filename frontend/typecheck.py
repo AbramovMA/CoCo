@@ -1,5 +1,5 @@
 from util import ASTVisitor, NodeError, BackrefError
-from ast import Type, ArrayType, FunType, Block, If, Return, Const
+from ast import Type, ArrayType, FunType, Block, If, Return, Const, Break, Continue
 
 
 class TypeChecker(ASTVisitor):
@@ -125,6 +125,17 @@ class TypeChecker(ASTVisitor):
 
     def visitModification(self, node):
         raise NotImplementedError  # should be desugared
+
+    def visitBlock(self, node):
+        self.visit_children(node)
+        statements = node.statements
+        terminator_filter = lambda x: (isinstance(x, Break) or isinstance(x, Continue))
+        terminator_statements = list(filter(terminator_filter, statements))
+        if terminator_statements:
+            node.manually_terminated = True
+            if statements.index(terminator_statements[0]) != len(statements) - 1:
+                bad_terminator_type = 'break' if isinstance(terminator_statements[0], Break) else 'continue'
+                raise NodeError(node, 'Error: block cannot continue after ' + bad_terminator_type)
 
     def visitIf(self, node):
         # condition must be bool

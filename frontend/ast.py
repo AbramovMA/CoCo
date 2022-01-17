@@ -379,6 +379,8 @@ class Block(Statement):
     children = ['statements']
     types = dict(statements='Statement*')
 
+    manually_terminated = False
+
     def __str__(self):
         if not self.statements:
             return '{}'
