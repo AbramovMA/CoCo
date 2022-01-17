@@ -8,6 +8,8 @@ calls all the compilation phases in sequence, pretty-prints errors, and handles
 I/O stuff like output filenames and stdin/stdout support. It also offers some
 handy command-line options for debugging (see below).
 
+hi
+
 
 Phase 1 - Lexing
 ----------------
