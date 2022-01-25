@@ -3,45 +3,70 @@
 
 namespace{
     class ADCEPass: public FunctionPass{
-    static char ID;
-    ADCEPass():FunctionPass(ID){}
-    virtual bool runOnFunction(Function &F)override;
+        public:
+            static char ID;
+            ADCEPass() : FunctionPass(ID){}
+            virtual bool runOnFunction(Function &F) override;
     };
 }
 
 bool ADCEPass::runOnFunction(Function &F){
-    //Initial pass to markt rivially live and trivially
-    //dead instructions. Perform this pass in depth-first
-    //order on the CFG so that we never visit blocks that
-    //are unreachable: those are trivially dead.
-    auto LiveSet = DenseSet<Instruction>();
-    // for (each BB in F in depth-first order)
-    //     for (each instruction I in BB)
-    //         if (isTriviallyLive(I))
-    //             markLive(I)
-    //         else if(I.use_empty())
-    //             remove I from BB;
-    // //Worklist to find new live instructions
-    // while(WorkList is not empty){
-    //     I = get instruction at head of worklist;
-    //     if (basic block containing I is reachable)
-    //         for (all operands op of I)
-    //             if (operand op is an instruction)
-    //                 markLive(op)
-    // }
-    // //Delete all instructions not in LiveSet. Since you
-    // //may be deleting multiple instructions that may be
-    // //in a def−use cycle, you must call I.dropAllReferences()
-    // //on all of them before deleting any of them
-    // //because you cannot delete a Value that has users.
-    // for (each BB in F in any order)
-    //     if (BB is reachable)
-    //         for (each non-live instruction I in BB)
-    //             I.dropAllReferences();
-    // for (each BB in F in any order)
-    //     if (BB is reachable)
-    //         for(each non-live instruction I in BB)
-    //             erase I from BB;
+    bool is_changed = false;
+    auto liveSet = DenseSet<Instruction*>();
+    auto deadSet = DenseSet<Instruction*>();
+
+    auto reachableBlocks = df_iterator_default_set<BasicBlock*>();
+
+    for (auto &BB : depth_first_ext(&F, reachableBlocks)){
+        for (auto &I : *BB){
+            if (I.mayHaveSideEffects()){
+                liveSet.insert(&I);
+            }else if (I.use_empty()){
+                deadSet.insert(&I);
+            }
+        }
+    }
+
+    for (auto &I : deadSet){
+        is_changed = true;
+        I->eraseFromParent();
+    }
+
+    auto workList = SmallVector<Instruction*, 1000>(liveSet.begin(), liveSet.end());
+    
+    while (!workList.empty()){
+        auto I = workList.pop_back_val();
+        if (reachableBlocks.count(I->getParent()))/*basic block containig I is reachable*/
+            for (auto &op : I->operands())
+                if (isa<Instruction>(op)){
+                    // mark live (I)
+                    workList.insert(workList.begin(), I);
+                }
+    }
+
+    for (auto &I : workList){
+        liveSet.insert(I);
+    }
+
+    // delete some magic
+    for (auto BB : reachableBlocks){
+        // for each non-live I in BB
+        for (auto &I : *BB)
+            if (!liveSet.count(&I)/*I is not live in BB*/)
+                I.dropAllReferences();
+    }
+
+    for (auto BB : reachableBlocks){
+        // for each non-live I in BB
+        for (auto &I : *BB)
+            if (!liveSet.count(&I)/*I is not live in BB*/){
+                // remove I from BB
+                I.eraseFromParent();
+                is_changed = true;
+            }
+    }
+
+    return is_changed;
 }
 
 char ADCEPass::ID = 0;
