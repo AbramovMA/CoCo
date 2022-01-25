@@ -7,3 +7,4 @@ bootstrap.log
 *.pyc
 coco.tar.gz
 .vscode/*
+examples/*.ll

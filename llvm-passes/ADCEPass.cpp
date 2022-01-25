@@ -1,4 +1,4 @@
-#define DEBUG_TYPE "DummyDTPass"
+#define DEBUG_TYPE "ADCEPass"
 #include "utils.h"
 
 namespace{
@@ -70,4 +70,4 @@ bool ADCEPass::runOnFunction(Function &F){
 }
 
 char ADCEPass::ID = 0;
-RegisterPass<ADCEPass> X("coco-adce", "Does magic.");
+// RegisterPass<ADCEPass> X("coco-adce", "Does magic.");
