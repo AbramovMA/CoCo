@@ -50,8 +50,8 @@ void simplify_instruction_and_find_users(Instruction *const I, SmallVector<Instr
                 auto result = ConstantInt::get(I->getContext(), result_value);
 
                 for (auto &u : I->uses())
-                    if (auto *i = dyn_cast<Instruction>(u.getUser())){
-                        worklist.insert(worklist.begin(), i);}
+                    if (auto *i = dyn_cast<Instruction>(u.getUser()))
+                        worklist.insert(worklist.begin(), i);
                 I->replaceAllUsesWith(result);
             }
 }
@@ -82,8 +82,6 @@ APInt perform_evaluation(const APInt arg1, const APInt arg2, const unsigned opco
             assert(0);
     }
 }
-
-
 
 char ConstPropPass::ID = 0;
 RegisterPass<ConstPropPass> X("coco-constprop", "Constant propagation pass.");
