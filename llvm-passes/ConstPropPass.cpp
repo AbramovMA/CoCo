@@ -84,4 +84,4 @@ APInt perform_evaluation(const APInt arg1, const APInt arg2, const unsigned opco
 }
 
 char ConstPropPass::ID = 0;
-RegisterPass<ConstPropPass> X("coco-constprop", "Constant propagation pass.");
+static RegisterPass<ConstPropPass> X("coco-constprop", "Constant propagation pass.");
