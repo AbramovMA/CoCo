@@ -1,11 +1,3 @@
-/*
- * Dummy module pass which can be used as example and starting point for
- * Assignment 3. This pass inserts calls to a helper function for every stack
- * allocation. The helper function prints the size of the stack allocation and
- * serves as an example how to create and insert helpers. The implementation of
- * the helper function can be found in runtime/dummy.c.
- */
-
 #define DEBUG_TYPE "BoundsCheckerPass"
 #include "utils.h"
 
@@ -17,68 +9,119 @@ namespace {
         virtual bool runOnModule(Module &M) override;
 
     private:
-        Function *PrintAllocFunc;
+        LLVMContext *context = nullptr;
+        IntegerType *int32_type = nullptr;
+        IRBuilder<> *IRB = nullptr;
+        Value *getArrayDefinition(GetElementPtrInst *I);
+        Value *getArraySize(Value *arrayDef);
+        bool shouldCheck(Instruction *I);
+        Value *getOrCreateTotalOffset(GetElementPtrInst *I);
 
-        bool instrumentAllocations(Function &F);
+        DenseMap<GetElementPtrInst *, Value *> gep_to_total_offset;
+
+        Function *boundsCheckerFunction = nullptr;
     };
 }
 
-/*
- * Finds all allocations in a function and inserts a call that prints its size.
- */
-bool BoundsCheckerPass::instrumentAllocations(Function &F) {
-    bool Changed = false;
 
-    // Construct an IRBuilder (at a random insertion point) so we can reuse it
-    // every time we need it.
-    IRBuilder<> B(&F.getEntryBlock());
-
-    // Iterate over all instructions in this function.
-    for (Instruction &II : instructions(F)) {
-        Instruction *I = &II;
-
-        // To see if this instruction is an allocation, we try to cast it to an
-        // AllocaInst. This returns a nullptr if this instruction is not an
-        // AllocaInst.
-        if (AllocaInst *AI = dyn_cast<AllocaInst>(I)) {
-            // Create a new call to our helper function, with the number of
-            // allocated elements as argument.
-            B.SetInsertPoint(AI);
-            B.CreateCall(PrintAllocFunc, { AI->getArraySize() });
-            Changed = true;
-        }
-    }
-    return Changed;
+[[maybe_unused]] bool BoundsCheckerPass::shouldCheck(Instruction *I){
+    if (auto gepI = dyn_cast<GetElementPtrInst>(I))
+        return (gepI->getNumIndices() == 1) ;// || I->hasAllZeroIndices();
+    return false;
 }
 
-bool BoundsCheckerPass::runOnModule(Module &M) {
-    // Retrieve a pointer to the helper function. The instrumentAllocations
-    // function will insert calls to this function for every allocation. This
-    // function is written in our runtime (runtime/dummy.c). To see its (LLVM)
-    // type, you can check runtime/obj/dummy.ll)
-    LLVMContext &C = M.getContext();
-    Type *VoidTy = Type::getVoidTy(C);
-    Type *Int32Ty = Type::getInt32Ty(C);
-    //   void @__coco_dummy_print_allocation(i32 %elems)
-    auto FnCallee = M.getOrInsertFunction("__coco_dummy_print_allocation",
-                                          VoidTy, Int32Ty);
-    PrintAllocFunc = cast<Function>(FnCallee.getCallee());
 
-    // LLVM wants to know whether we made any modifications to the IR, so we
-    // keep track of this.
-    bool Changed = false;
+/**
+ * Returns the oldest array definition or phi node
+ * Returns `nullptr` is not an array access
+ **/
+Value *BoundsCheckerPass::getArrayDefinition(GetElementPtrInst *I){
+    auto *origin = I->getPointerOperand();
+    if (auto *parentGEP = dyn_cast<GetElementPtrInst>(origin))
+        return getArrayDefinition(parentGEP);
+    // add PHI case
+    else //if (!origin->getType()->getPointerElementType()->isStructTy())
+        return origin; // exclude Struct GEPs
+}
 
-    for (Function &F : M) {
-        // We want to skip instrumenting certain functions, like declarations
-        // and helper functions (e.g., our dummy_print_allocation)
-        if (!shouldInstrument(&F))
-            continue;
+// constant value or variable
+Value *BoundsCheckerPass::getArraySize(Value *arrayDef){
+    if (auto *allocaDef = dyn_cast<AllocaInst>(arrayDef))
+        return allocaDef->getArraySize();
+    else if (auto *argumentDef [[maybe_unused]] = dyn_cast<Argument>(arrayDef))
+        // find function argument [or argc]
+        return nullptr;
+    else if (auto *phiDef [[maybe_unused]] = dyn_cast<PHINode>(arrayDef))
+        return nullptr;
+    else if (auto *globalDef [[maybe_unused]] = dyn_cast<GlobalVariable>(arrayDef))
+        return ConstantInt::get(int32_type, globalDef->getType()->getPointerElementType()->getArrayNumElements());
+    else
+        return nullptr;
+}
 
-        LOG_LINE("Visiting function " << F.getName());
-        Changed |= instrumentAllocations(F);
+
+Value *BoundsCheckerPass::getOrCreateTotalOffset(GetElementPtrInst *I){
+    // GEP is alrady processed
+    if (gep_to_total_offset.count(I))
+        return gep_to_total_offset.lookup(I);
+
+    // GEP accesses the array directly
+        /* Add PHI case */
+    if (I->getPointerOperand() == getArrayDefinition(I)){
+        gep_to_total_offset.insert(std::make_pair(I, I->getOperand(1)));
+        return I->getOperand(1);
     }
 
-    return Changed;
+    // GEP accesses an indirect pointer
+    auto previous_offset = getOrCreateTotalOffset(dyn_cast<GetElementPtrInst>(I->getPointerOperand()));
+    auto additional_offset = I->getOperand(1);
+    if (auto const_previous_offset = dyn_cast<ConstantInt>(previous_offset))
+        if (auto const_additional_offset = dyn_cast<ConstantInt>(additional_offset)){
+            // offset in constant and can be calculated at compile-time
+            auto APtotal_offset = const_previous_offset->getValue() + const_additional_offset->getValue();
+            auto total_offset = ConstantInt::get(int32_type, APtotal_offset);
+            gep_to_total_offset.insert(std::make_pair(I, total_offset));
+            return total_offset;
+        }
+    
+    // offset must be calculated at run-time
+    IRB->SetInsertPoint(I);
+    auto total_offset = IRB->CreateAdd(previous_offset, additional_offset);
+    gep_to_total_offset.insert(std::make_pair(I, total_offset));
+    return total_offset;
+}
+
+
+bool BoundsCheckerPass::runOnModule(Module &M) {
+    context = &M.getContext();
+
+    IRBuilder<> IRB_ (*context);
+    IRB = &IRB_;
+
+    int32_type = Type::getInt32Ty(*context);
+    auto void_type = Type::getVoidTy(*context);
+
+    auto checkerCallee = M.getOrInsertFunction("__coco_check_bounds", void_type, int32_type, int32_type);
+    boundsCheckerFunction = dyn_cast<Function>(checkerCallee.getCallee());
+
+    for (auto &F [[maybe_unused]] : M){
+        /*
+        Add array sizes to function definitions
+        Replace function uses
+        */
+    }
+
+    for (auto &F : M)
+        for (auto &I : instructions(F))
+            if (shouldCheck(&I)){
+                auto *gepI = cast<GetElementPtrInst>(&I);
+                auto *offset = getOrCreateTotalOffset(gepI);
+                auto *size = getArraySize(getArrayDefinition(gepI));
+                IRB->SetInsertPoint(gepI);
+                IRB->CreateCall(boundsCheckerFunction, {offset, size});
+            }
+
+    return !gep_to_total_offset.empty();
 }
 
 
