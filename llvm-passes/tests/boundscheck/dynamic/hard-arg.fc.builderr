@@ -1,2 +1,8 @@
-[BoundsCheckerPass] Visiting function foo
-[BoundsCheckerPass] Visiting function main
+Operand is null
+  call void @__coco_check_bounds(i32 %i.0, <null operand!>)
+Operand is null
+  call void @__coco_check_bounds(i32 0, <null operand!>)
+Operand is null
+  call void @__coco_check_bounds(i32 100, <null operand!>)
+in function foo
+LLVM ERROR: Broken function found, compilation aborted!

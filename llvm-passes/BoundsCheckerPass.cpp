@@ -12,20 +12,22 @@ namespace {
         LLVMContext *context = nullptr;
         IntegerType *int32_type = nullptr;
         IRBuilder<> *IRB = nullptr;
-        Value *getArrayDefinition(GetElementPtrInst *I);
-        Value *getArraySize(Value *arrayDef);
+        Value *getArrayDefinition(Value *I);
+        Value *getOrCreateArraySize(Value *arrayDef);
         bool shouldCheck(Instruction *I);
-        Value *getOrCreateTotalOffset(GetElementPtrInst *I);
+        Value *getOrCreateTotalOffset(Value *I);
 
-        DenseMap<GetElementPtrInst *, Value *> gep_to_total_offset;
+        DenseMap<Value *, Value *> inst_to_total_offset;
+        DenseMap<PHINode *, Value *> phi_to_size;
+        // DenseMap<PHINode *, Value *> phi_to_offset;
 
         Function *boundsCheckerFunction = nullptr;
     };
 }
 
 
-[[maybe_unused]] bool BoundsCheckerPass::shouldCheck(Instruction *I){
-    if (auto gepI = dyn_cast<GetElementPtrInst>(I))
+bool BoundsCheckerPass::shouldCheck(Instruction *I){
+    if (auto *gepI = dyn_cast<GetElementPtrInst>(I))
         return (gepI->getNumIndices() == 1) ;// || I->hasAllZeroIndices();
     return false;
 }
@@ -35,60 +37,79 @@ namespace {
  * Returns the oldest array definition or phi node
  * Returns `nullptr` is not an array access
  **/
-Value *BoundsCheckerPass::getArrayDefinition(GetElementPtrInst *I){
-    auto *origin = I->getPointerOperand();
-    if (auto *parentGEP = dyn_cast<GetElementPtrInst>(origin))
-        return getArrayDefinition(parentGEP);
+Value *BoundsCheckerPass::getArrayDefinition(Value *I){
+    if (auto *gepI = dyn_cast<GetElementPtrInst>(I))
+        return getArrayDefinition(gepI->getPointerOperand());
     // add PHI case
     else //if (!origin->getType()->getPointerElementType()->isStructTy())
-        return origin; // exclude Struct GEPs
+        return I; // exclude Struct GEPs
 }
 
 // constant value or variable
-Value *BoundsCheckerPass::getArraySize(Value *arrayDef){
+Value *BoundsCheckerPass::getOrCreateArraySize(Value *arrayDef){
     if (auto *allocaDef = dyn_cast<AllocaInst>(arrayDef))
         return allocaDef->getArraySize();
+    else if (auto *phiDef = dyn_cast<PHINode>(arrayDef)){
+        if (phi_to_size.count(phiDef))
+            return phi_to_size.lookup(phiDef);
+        IRB->SetInsertPoint(phiDef);
+        auto *phiSize = IRB->CreatePHI(int32_type, phiDef->getNumIncomingValues());
+        for (unsigned i = 0; i < phiDef->getNumIncomingValues(); ++i){
+            if (phiDef->getIncomingValue(i) == phiDef)
+                phiSize->addIncoming(phiSize, phiDef->getIncomingBlock(i));
+            else{
+                auto *size = getOrCreateArraySize(getArrayDefinition(phiDef->getIncomingValue(i)));
+                phiSize->addIncoming(size, phiDef->getIncomingBlock(i));
+            }
+        }
+        phi_to_size.insert(std::make_pair(phiDef, phiSize));
+        return phiSize;
+    }
     else if (auto *argumentDef [[maybe_unused]] = dyn_cast<Argument>(arrayDef))
         // find function argument [or argc]
         return nullptr;
-    else if (auto *phiDef [[maybe_unused]] = dyn_cast<PHINode>(arrayDef))
-        return nullptr;
-    else if (auto *globalDef [[maybe_unused]] = dyn_cast<GlobalVariable>(arrayDef))
+    else if (auto *globalDef = dyn_cast<GlobalVariable>(arrayDef))
         return ConstantInt::get(int32_type, globalDef->getType()->getPointerElementType()->getArrayNumElements());
     else
         return nullptr;
 }
 
 
-Value *BoundsCheckerPass::getOrCreateTotalOffset(GetElementPtrInst *I){
+Value *BoundsCheckerPass::getOrCreateTotalOffset(Value *I){
     // GEP is alrady processed
-    if (gep_to_total_offset.count(I))
-        return gep_to_total_offset.lookup(I);
+    if (inst_to_total_offset.count(I))
+        return inst_to_total_offset.lookup(I);
 
-    // GEP accesses the array directly
-        /* Add PHI case */
-    if (I->getPointerOperand() == getArrayDefinition(I)){
-        gep_to_total_offset.insert(std::make_pair(I, I->getOperand(1)));
-        return I->getOperand(1);
-    }
-
-    // GEP accesses an indirect pointer
-    auto previous_offset = getOrCreateTotalOffset(dyn_cast<GetElementPtrInst>(I->getPointerOperand()));
-    auto additional_offset = I->getOperand(1);
-    if (auto const_previous_offset = dyn_cast<ConstantInt>(previous_offset))
-        if (auto const_additional_offset = dyn_cast<ConstantInt>(additional_offset)){
-            // offset in constant and can be calculated at compile-time
-            auto APtotal_offset = const_previous_offset->getValue() + const_additional_offset->getValue();
-            auto total_offset = ConstantInt::get(int32_type, APtotal_offset);
-            gep_to_total_offset.insert(std::make_pair(I, total_offset));
-            return total_offset;
+    /* Add PHI case */
+    if (auto *gepI = dyn_cast<GetElementPtrInst>(I)){        
+        // GEP accesses the array directly
+        if (gepI->getPointerOperand() == getArrayDefinition(gepI)){
+            inst_to_total_offset.insert(std::make_pair(gepI, gepI->getOperand(1)));
+            return gepI->getOperand(1);
         }
-    
-    // offset must be calculated at run-time
-    IRB->SetInsertPoint(I);
-    auto total_offset = IRB->CreateAdd(previous_offset, additional_offset);
-    gep_to_total_offset.insert(std::make_pair(I, total_offset));
-    return total_offset;
+
+        // GEP accesses an indirect pointer
+        auto *previous_offset = getOrCreateTotalOffset(gepI->getPointerOperand());
+        auto *additional_offset = gepI->getOperand(1);
+        if (auto *const_previous_offset = dyn_cast<ConstantInt>(previous_offset))
+            if (auto *const_additional_offset = dyn_cast<ConstantInt>(additional_offset)){
+                // offset in constant and can be calculated at compile-time
+                auto APtotal_offset = const_previous_offset->getValue() + const_additional_offset->getValue();
+                auto *total_offset = ConstantInt::get(int32_type, APtotal_offset);
+                inst_to_total_offset.insert(std::make_pair(gepI, total_offset));
+                return total_offset;
+            }
+        
+        // offset must be calculated at run-time
+        IRB->SetInsertPoint(gepI);
+        auto *total_offset = IRB->CreateAdd(previous_offset, additional_offset);
+        inst_to_total_offset.insert(std::make_pair(gepI, total_offset));
+        return total_offset;
+    }
+    if (auto *phiI [[maybe_unused]] = dyn_cast<PHINode>(I)){
+        return nullptr;
+    }
+    return nullptr;
 }
 
 
@@ -99,7 +120,7 @@ bool BoundsCheckerPass::runOnModule(Module &M) {
     IRB = &IRB_;
 
     int32_type = Type::getInt32Ty(*context);
-    auto void_type = Type::getVoidTy(*context);
+    auto *void_type = Type::getVoidTy(*context);
 
     auto checkerCallee = M.getOrInsertFunction("__coco_check_bounds", void_type, int32_type, int32_type);
     boundsCheckerFunction = dyn_cast<Function>(checkerCallee.getCallee());
@@ -114,14 +135,14 @@ bool BoundsCheckerPass::runOnModule(Module &M) {
     for (auto &F : M)
         for (auto &I : instructions(F))
             if (shouldCheck(&I)){
-                auto *gepI = cast<GetElementPtrInst>(&I);
-                auto *offset = getOrCreateTotalOffset(gepI);
-                auto *size = getArraySize(getArrayDefinition(gepI));
-                IRB->SetInsertPoint(gepI);
+                // auto *gepI = cast<GetElementPtrInst>(&I);
+                auto *offset = getOrCreateTotalOffset(&I);
+                auto *size = getOrCreateArraySize(getArrayDefinition(&I));
+                IRB->SetInsertPoint(&I);
                 IRB->CreateCall(boundsCheckerFunction, {offset, size});
             }
 
-    return !gep_to_total_offset.empty();
+    return !inst_to_total_offset.empty();
 }
 
 
