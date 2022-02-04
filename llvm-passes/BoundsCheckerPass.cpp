@@ -54,6 +54,7 @@ Value *BoundsCheckerPass::getOrCreateArraySize(Value *arrayDef){
             return phi_to_size.lookup(phiDef);
         IRB->SetInsertPoint(phiDef);
         auto *phiSize = IRB->CreatePHI(int32_type, phiDef->getNumIncomingValues());
+        phi_to_size.insert(std::make_pair(phiDef, phiSize));
         for (unsigned i = 0; i < phiDef->getNumIncomingValues(); ++i){
             if (phiDef->getIncomingValue(i) == phiDef)
                 phiSize->addIncoming(phiSize, phiDef->getIncomingBlock(i));
@@ -62,7 +63,6 @@ Value *BoundsCheckerPass::getOrCreateArraySize(Value *arrayDef){
                 phiSize->addIncoming(size, phiDef->getIncomingBlock(i));
             }
         }
-        phi_to_size.insert(std::make_pair(phiDef, phiSize));
         return phiSize;
     }
     else if (auto *argumentDef [[maybe_unused]] = dyn_cast<Argument>(arrayDef))
@@ -105,11 +105,39 @@ Value *BoundsCheckerPass::getOrCreateTotalOffset(Value *I){
         auto *total_offset = IRB->CreateAdd(previous_offset, additional_offset);
         inst_to_total_offset.insert(std::make_pair(gepI, total_offset));
         return total_offset;
-    }
-    if (auto *phiI [[maybe_unused]] = dyn_cast<PHINode>(I)){
-        return nullptr;
-    }
-    return nullptr;
+    }else if (auto *phiI [[maybe_unused]] = dyn_cast<PHINode>(I)){
+        // skip if all values are oririnal arrays (have no offset)
+        if (all_of(phiI->incoming_values(), [&, this](Use &u){
+                auto *phiValue = u.get();
+                if (phiValue == phiI)
+                    return true;
+                else if (isa<PHINode>(phiValue)) // avoid infinite recursion, even if the real answer is 0
+                    return false;
+                else if (auto *constantOffset = dyn_cast<ConstantInt>(this->getOrCreateTotalOffset(phiValue)))
+                    return constantOffset->getValue() == 0;
+                else
+                    return false;
+                })){
+            auto no_offset = ConstantInt::get(int32_type, 0);
+            inst_to_total_offset.insert(std::make_pair(phiI, no_offset));
+            return no_offset;
+        }else{
+            IRB->SetInsertPoint(phiI);
+            auto *phiOffset = IRB->CreatePHI(int32_type, phiI->getNumIncomingValues());
+            inst_to_total_offset.insert(std::make_pair(phiI, phiOffset));
+            for (unsigned i = 0; i < phiI->getNumIncomingValues(); ++i){
+                if (phiI->getIncomingValue(i) == phiI)
+                    phiOffset->addIncoming(phiOffset, phiI->getIncomingBlock(i));
+                else{
+                    auto *offset = getOrCreateTotalOffset(phiI->getIncomingValue(i));
+                    phiOffset->addIncoming(offset, phiI->getIncomingBlock(i));
+                }
+            }
+            return phiOffset;
+        }
+    }else
+        // Some kind of array definition
+        return ConstantInt::get(int32_type, 0);
 }
 
 
@@ -135,7 +163,7 @@ bool BoundsCheckerPass::runOnModule(Module &M) {
     for (auto &F : M)
         for (auto &I : instructions(F))
             if (shouldCheck(&I)){
-                // auto *gepI = cast<GetElementPtrInst>(&I);
+                // first do offset, then size to pass automated tests
                 auto *offset = getOrCreateTotalOffset(&I);
                 auto *size = getOrCreateArraySize(getArrayDefinition(&I));
                 IRB->SetInsertPoint(&I);
