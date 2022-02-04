@@ -17,9 +17,12 @@ namespace {
         bool shouldCheck(Instruction *I);
         Value *getOrCreateTotalOffset(Value *I);
 
+        Function *createSmartFunction(Function *F);
+
         DenseMap<Value *, Value *> inst_to_total_offset;
         DenseMap<PHINode *, Value *> phi_to_size;
-        // DenseMap<PHINode *, Value *> phi_to_offset;
+
+        DenseMap<Argument *, Argument *> array_to_size_arg;
 
         Function *boundsCheckerFunction = nullptr;
     };
@@ -29,18 +32,17 @@ namespace {
 bool BoundsCheckerPass::shouldCheck(Instruction *I){
     if (auto *gepI = dyn_cast<GetElementPtrInst>(I))
         return (gepI->getNumIndices() == 1) ;// || I->hasAllZeroIndices();
-    return false;
+    else
+        return false;
 }
-
 
 /**
  * Returns the oldest array definition or phi node
- * Returns `nullptr` is not an array access
+ * Returns `nullptr` is not an array access [NYI]
  **/
 Value *BoundsCheckerPass::getArrayDefinition(Value *I){
     if (auto *gepI = dyn_cast<GetElementPtrInst>(I))
         return getArrayDefinition(gepI->getPointerOperand());
-    // add PHI case
     else //if (!origin->getType()->getPointerElementType()->isStructTy())
         return I; // exclude Struct GEPs
 }
@@ -66,21 +68,18 @@ Value *BoundsCheckerPass::getOrCreateArraySize(Value *arrayDef){
         return phiSize;
     }
     else if (auto *argumentDef [[maybe_unused]] = dyn_cast<Argument>(arrayDef))
-        // find function argument [or argc]
-        return nullptr;
+        return array_to_size_arg.lookup(argumentDef);
     else if (auto *globalDef = dyn_cast<GlobalVariable>(arrayDef))
         return ConstantInt::get(int32_type, globalDef->getType()->getPointerElementType()->getArrayNumElements());
     else
         return nullptr;
 }
 
-
 Value *BoundsCheckerPass::getOrCreateTotalOffset(Value *I){
-    // GEP is alrady processed
+    // Instruction (or definition) is alrady processed
     if (inst_to_total_offset.count(I))
         return inst_to_total_offset.lookup(I);
 
-    /* Add PHI case */
     if (auto *gepI = dyn_cast<GetElementPtrInst>(I)){        
         // GEP accesses the array directly
         if (gepI->getPointerOperand() == getArrayDefinition(gepI)){
@@ -140,6 +139,46 @@ Value *BoundsCheckerPass::getOrCreateTotalOffset(Value *I){
         return ConstantInt::get(int32_type, 0);
 }
 
+bool isStandardMainFunction(Function *F){
+    if (F->getName() != "main")
+        return false;
+    if (F->arg_size() != 2)
+        return false;
+    auto *arg1 = F->getArg(0);
+    auto *arg2 = F->getArg(1);
+    if (!arg1->getType()->isIntegerTy())
+        return false;
+    if (!arg2->getType()->isPointerTy())
+        return false;
+    if (!arg2->getType()->getPointerElementType()->isPointerTy())
+        return false;
+    if (!arg2->getType()->getPointerElementType()->getPointerElementType()->isIntegerTy())
+        return false;
+    return true;
+}
+
+/**
+ * Returns a new function with size arguments and registers array-size associations
+ * Returns `nullptr` if no additional size arguments are needed
+ **/
+Function *BoundsCheckerPass::createSmartFunction(Function *F){
+    if (F->getName() == "main"){
+        if (isStandardMainFunction(F))
+            array_to_size_arg.insert(std::make_pair(F->getArg(1), F->getArg(0)));
+        return nullptr;
+    }
+    size_t array_argument_count = count_if(F->getFunctionType()->params(), [](Type *argT){return argT->isPointerTy();});
+    if (array_argument_count == 0)
+        return nullptr;
+    auto size_argument_types = SmallVector<Type*, 10>(array_argument_count, int32_type);
+    auto new_arguments = SmallVector<Argument *, 10>();
+    auto smart_function = addParamsToFunction(F, size_argument_types, new_arguments);
+    size_t arg_index = 0;
+    for (auto &arg : smart_function->args())
+        if (arg.getType()->isPointerTy())
+            array_to_size_arg.insert(std::make_pair(&arg, new_arguments[arg_index++]));
+    return smart_function;
+}
 
 bool BoundsCheckerPass::runOnModule(Module &M) {
     context = &M.getContext();
@@ -153,24 +192,71 @@ bool BoundsCheckerPass::runOnModule(Module &M) {
     auto checkerCallee = M.getOrInsertFunction("__coco_check_bounds", void_type, int32_type, int32_type);
     boundsCheckerFunction = dyn_cast<Function>(checkerCallee.getCallee());
 
-    for (auto &F [[maybe_unused]] : M){
-        /*
-        Add array sizes to function definitions
-        Replace function uses
-        */
+    // create functions with new signatures
+    auto function_replacements = DenseMap<Function *, Function *>();
+    auto smart_functions = DenseSet<Function *>();
+    for (auto &F : M){
+        if (!shouldInstrument(&F))
+            continue;
+        if (auto smart_function = createSmartFunction(&F)){
+            function_replacements.insert(std::make_pair(&F, smart_function));
+            smart_functions.insert(smart_function);
+        }else
+            smart_functions.insert(&F);
     }
 
-    for (auto &F : M)
-        for (auto &I : instructions(F))
-            if (shouldCheck(&I)){
-                // first do offset, then size to pass automated tests
-                auto *offset = getOrCreateTotalOffset(&I);
-                auto *size = getOrCreateArraySize(getArrayDefinition(&I));
-                IRB->SetInsertPoint(&I);
-                IRB->CreateCall(boundsCheckerFunction, {offset, size});
-            }
+    bool is_changed = false;
 
-    return !inst_to_total_offset.empty();
+    // add bound checking
+    auto unchecked_geps = SmallVector<Instruction *, 100>();
+    for (auto *F : smart_functions)
+        for (auto &I : instructions(*F))
+            if (shouldCheck(&I))
+                unchecked_geps.append(1, &I);
+    
+    for (auto *check_point : unchecked_geps){
+        // first do offset, then size to pass automated tests
+        auto *offset = getOrCreateTotalOffset(check_point);
+        auto *size = getOrCreateArraySize(getArrayDefinition(check_point));
+        IRB->SetInsertPoint(check_point);
+        IRB->CreateCall(boundsCheckerFunction, {offset, size});
+        is_changed = true;
+    }
+    unchecked_geps.clear();
+    inst_to_total_offset.clear();
+
+    // update function calls
+    auto old_calls = SmallVector<CallInst *, 100>();
+    for (auto *F : smart_functions)
+        for (auto &I : instructions(*F))
+            if (auto *callI = dyn_cast<CallInst>(&I))
+                if (function_replacements.count(callI->getCalledFunction()))
+                    old_calls.append(1, callI);
+    smart_functions.clear();
+
+    for (auto *callI : old_calls){
+        auto *smartFunction = function_replacements.lookup(callI->getCalledFunction());
+        auto new_arguments = SmallVector<Value *, 10>(callI->args());
+        for (auto *arg : new_arguments)
+            if (arg->getType()->isPointerTy())
+                new_arguments.append(1, getOrCreateArraySize(getArrayDefinition(arg)));
+        IRB->SetInsertPoint(callI);
+        auto new_call = IRB->CreateCall(smartFunction, new_arguments);
+        callI->replaceAllUsesWith(new_call);
+        is_changed = true;
+    }
+    function_replacements.clear();
+    phi_to_size.clear();
+    array_to_size_arg.clear();
+
+
+    for (auto *callI : old_calls)
+        callI->dropAllReferences();
+    for (auto *callI : old_calls)
+        callI->eraseFromParent();
+    old_calls.clear();
+
+    return is_changed;
 }
 
 
