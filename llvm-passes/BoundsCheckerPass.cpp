@@ -31,20 +31,19 @@ namespace {
 
 bool BoundsCheckerPass::shouldCheck(Instruction *I){
     if (auto *gepI = dyn_cast<GetElementPtrInst>(I))
-        return (gepI->getNumIndices() == 1) ;// || I->hasAllZeroIndices();
+        return (gepI->getNumIndices() == 1) ;
     else
         return false;
 }
 
 /**
  * Returns the oldest array definition or phi node
- * Returns `nullptr` is not an array access [NYI]
  **/
 Value *BoundsCheckerPass::getArrayDefinition(Value *I){
     if (auto *gepI = dyn_cast<GetElementPtrInst>(I))
         return getArrayDefinition(gepI->getPointerOperand());
-    else //if (!origin->getType()->getPointerElementType()->isStructTy())
-        return I; // exclude Struct GEPs
+    else
+        return I;
 }
 
 // constant value or variable
@@ -135,26 +134,23 @@ Value *BoundsCheckerPass::getOrCreateTotalOffset(Value *I){
             return phiOffset;
         }
     }else
-        // Some kind of array definition
+        // Already some kind of array definition
         return ConstantInt::get(int32_type, 0);
 }
 
 bool isStandardMainFunction(Function *F){
-    if (F->getName() != "main")
-        return false;
-    if (F->arg_size() != 2)
+    /* i32 main(i32, i8**) */
+    if (F->getName() != "main" || F->arg_size() != 2 || !F->getReturnType()->isIntegerTy())
         return false;
     auto *arg1 = F->getArg(0);
     auto *arg2 = F->getArg(1);
-    if (!arg1->getType()->isIntegerTy())
+    if (!arg1->getType()->isIntegerTy() ||
+        !arg2->getType()->isPointerTy() ||
+        !arg2->getType()->getPointerElementType()->isPointerTy() ||
+        !arg2->getType()->getPointerElementType()->getPointerElementType()->isIntegerTy())
         return false;
-    if (!arg2->getType()->isPointerTy())
-        return false;
-    if (!arg2->getType()->getPointerElementType()->isPointerTy())
-        return false;
-    if (!arg2->getType()->getPointerElementType()->getPointerElementType()->isIntegerTy())
-        return false;
-    return true;
+    else
+        return true;
 }
 
 /**
@@ -162,11 +158,11 @@ bool isStandardMainFunction(Function *F){
  * Returns `nullptr` if no additional size arguments are needed
  **/
 Function *BoundsCheckerPass::createSmartFunction(Function *F){
-    if (F->getName() == "main"){
-        if (isStandardMainFunction(F))
-            array_to_size_arg.insert(std::make_pair(F->getArg(1), F->getArg(0)));
+    if (isStandardMainFunction(F)){
+        array_to_size_arg.insert(std::make_pair(F->getArg(1), F->getArg(0)));
         return nullptr;
     }
+
     size_t array_argument_count = count_if(F->getFunctionType()->params(), [](Type *argT){return argT->isPointerTy();});
     if (array_argument_count == 0)
         return nullptr;
@@ -192,7 +188,7 @@ bool BoundsCheckerPass::runOnModule(Module &M) {
     auto checkerCallee = M.getOrInsertFunction("__coco_check_bounds", void_type, int32_type, int32_type);
     boundsCheckerFunction = dyn_cast<Function>(checkerCallee.getCallee());
 
-    // create functions with new signatures
+    // create functions with new "smart" signatures
     auto function_replacements = DenseMap<Function *, Function *>();
     auto smart_functions = DenseSet<Function *>();
     for (auto &F : M){
